@@ -1,0 +1,33 @@
+{
+  "id": "2026-10-27-systems-lab-dropdowns-shared-plan-billing",
+  "summary": "Systems Lab now has uniform custom dropdowns, one overall per-project VPS CPU/RAM plan with automatic shares, fixed-price and subscription/overage projections. FreshPhones Docker startup completed and its page returned HTTP 200 at localhost:18080.",
+  "status": "shared-plan-billing-ready",
+  "progress": [
+    "Updated public/app.js and public/style.css with shared custom dropdown controls for 8 selectors/suggestions, including terminal filters, test target, service links, Dockerfile input, plan size and billing mode. Native state/events remain; supports keyboard/typeahead, Escape/Tab, disabled/dynamic options, one open menu, viewport placement and native-dialog layering.",
+    "Added overall VPS/environment plan in public/index.html and app.js. Presets or custom total CPU/RAM/storage distribute CPU in 0.01-core and RAM in 64-MiB shares using service weights. Adding resources rebalances; per-service shares are collapsed under Advanced. Manual over-allocation is blocked; plans persist per project through Prepare/Start and workspace saves.",
+    "Added Pricing & overage: illustrative capacity estimate, user-entered fixed VPS price, or base subscription plus max(0, projected resource cost minus included credit). Rates/hours are editable. Projection uses chosen capacity and hours, not live metered usage or provider prices. Storage remains a planning budget; no billing service connection or actual charges.",
+    "Updated infra.mjs budget/billing validation and estimates. 11 Node/core/runtime/integration tests passed, including total-budget rejection and credit/overage arithmetic; existing real k6 regression passed. Captured browser-generated Compose configuration passed validation with runtime limits totaling 2 CPU and 4096 MiB. Migration ordering reuses the API share.",
+    "Chromium tests passed all 8 controls, 1280/768/375/320 widths, themes, keyboard/cancel/commit, sync/disabled states. Plan test passed 2-CPU/4-GiB example with entered $12 fixed price, metered overage, Kafka rebalance, over-budget rejection, per-project saves and compact desktop geometry. No page errors. Artifacts: /tmp/systems-lab-overall-plan-desktop.png and /tmp/systems-lab-dropdown-dark.png.",
+    "Waited until the active FreshPhones Docker operation completed before restarting systems-lab user service to load backend changes. API/web/worker/nginx running, postgres/redis healthy, migration exited 0; local homepage redirect followed to HTTP 200 at localhost:18080. Did not apply the browser fixture plan or run a real $12-VPS benchmark. README documents pricing and cap limitations."
+  ],
+  "decisions": [
+    "User requested all dropdowns fixed, an overall subscription-like resource plan instead of configuring every service, and overage modeling. Preserve compatibility and active builds; use one capacity plan with advanced per-service escape hatches.",
+    "Price is a user-entered reference and does not determine CPU/RAM. Capacity presets are local examples, not Railway or VPS offers. Test actual project containers, not uncapped demo processes, to evaluate a VPS-like configuration.",
+    "CPU/RAM caps are fixed per-container shares whose sum stays within the plan, not an elastic shared parent cgroup. Project images still build using host resources; storage quota is not enforced.",
+    "Usage-based projection is base fee plus estimated excess above included credit. It assumes planned capacity for configured hours and excludes provider-specific request/egress/managed-service/tax costs; it is not actual metering or a bill."
+  ],
+  "blockers": [
+    "No observed blocker for dropdowns, plan/billing UI or the running FreshPhones page. Sustainable workload, performance equivalence to any VPS and enforcement under stress remain unverified."
+  ],
+  "questions": [
+    "Actual VPS provider/specs, intended load, latency/error objectives and real billing rules remain unknown. Vault read returned I/O errors during final stage-contract reads; persistence is attempted separately and must be confirmed."
+  ],
+  "next": [
+    "Refresh localhost:8787 and set Infrastructure \u2192 Resources \u2192 Overall VPS/environment plan; enter actual offer specs and choose pricing model. Prepare/start to apply shares, then test Project stack.",
+    "Evaluate p50/p95/p99, failures, throughput and measured usage against workload goals before claiming a price/performance result.",
+    "Use systems-lab user service for the controller; infrastructure containers retain their separate lifecycle."
+  ],
+  "sources": [
+    "01-Projects/Systems Lab/README.md"
+  ]
+}

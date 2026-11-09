@@ -1,0 +1,30 @@
+{
+  "id": "2026-10-27-systems-lab-remove-resource",
+  "summary": "Added optional-resource removal with row and inspector actions, Undo, automatic-share rebalancing and profile-required service protection. Changes are draft settings until Prepare/Start; stored data is retained.",
+  "status": "resource-removal-ready",
+  "progress": [
+    "Updated /home/nami/Desktop/projects/Apps/systems-lab/public/app.js and public/style.css: resource rows have accessible Remove buttons and inspector header has an always-visible Remove action. Required actions are disabled with visible reasons.",
+    "Removal selects a remaining service, rebalances automatic shares, marks settings unsaved and offers Undo with focus return. Advanced Include service uses the same removal flow. Manual allocations leave capacity available for Auto-distribute.",
+    "Protected nginx/web in all profiles and api/worker/postgres/redis in FreshPhones, matching backend requirements. Redis and PostgreSQL remain optional in the generic Dockerfile profile. Stop remains the action for a required-service outage.",
+    "Browser fixture checks passed row/header/Advanced removal, Undo, required protection, custom Redis removal, budget totals and prepared-config exclusion. 1280/375/320 widths passed with reachable Remove buttons and no page errors. Node syntax passed. Screenshot: /tmp/systems-lab-remove-resource-desktop.png.",
+    "Updated README remove/apply/data-retention guidance. No live resources or data were removed during tests; API writes were intercepted in the browser fixture.",
+    "Vault reads still return I/O errors and brain resume returns no output. Local handoff is docs/session-remove-resource.json; vault persistence must not be assumed."
+  ],
+  "decisions": [
+    "Removal edits the project plan first; existing Prepare/Start applies it via the established Compose workflow. Keep data volumes and allow Undo without a confirmation prompt.",
+    "Required services cannot be removed from an incompatible profile. Explain the requirement and preserve Stop for outage testing."
+  ],
+  "blockers": [
+    "No blocker observed for resource removal. Vault memory persistence remains unverified."
+  ],
+  "questions": [
+    "No full human usability study; user acceptance of required-service protection is unknown."
+  ],
+  "next": [
+    "Refresh the app. Remove optional resources with \u00d7 or the inspector action; Undo restores them. Prepare/start applies the edited plan.",
+    "Recover the vault context workflow before claiming canonical session persistence."
+  ],
+  "sources": [
+    "01-Projects/Systems Lab/README.md"
+  ]
+}

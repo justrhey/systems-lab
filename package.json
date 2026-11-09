@@ -1,0 +1,11 @@
+{
+  "name": "systems-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "cargo run --release",
+    "build": "cargo build --release",
+    "test": "cargo test && cargo build && node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

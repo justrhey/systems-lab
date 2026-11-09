@@ -1,0 +1,125 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { mkdtemp, copyFile, mkdir, symlink, cp, readFile, writeFile } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+test('real HTTP services, independent k6 sessions, partitions and cleanup', { timeout: 45000 }, async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'systems-lab-test-'));
+  for (const file of ['infra-adapter.mjs', 'infra.mjs', 'project-definition.mjs', 'runner.mjs']) await copyFile(path.join(root, file), path.join(directory, file));
+  await mkdir(path.join(directory, 'bin'));
+  await symlink(path.join(root, 'bin/k6'), path.join(directory, 'bin/k6'));
+  await mkdir(path.join(directory, 'catalog/Apps/example'), { recursive: true });
+  await writeFile(path.join(directory, 'catalog/Apps/example/package.json'), '{}');
+  await cp(path.join(root, 'public'), path.join(directory, 'public'), { recursive: true });
+  const port = 18787, base = `http://127.0.0.1:${port}`;
+  let output = '';
+  const child = spawn(path.join(root, 'target/debug/systems-lab'), [], { cwd: directory, env: { ...process.env, SYSTEMS_LAB_ROOT: directory, SYSTEMS_LAB_PROJECTS_ROOT: path.join(directory, 'catalog'), PORT: String(port) }, stdio: ['ignore', 'pipe', 'pipe'] });
+  child.stdout.on('data', b => { output += b; }); child.stderr.on('data', b => { output += b; });
+  t.after(async () => { if (child.exitCode !== null || child.signalCode !== null) return; const closed = new Promise(resolve => child.once('close', resolve)); child.kill('SIGTERM'); await closed; });
+  async function api(endpoint, body) {
+    const response = await fetch(base + endpoint, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const data = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(data)); return data;
+  }
+  let ready = false;
+  for (let i = 0; i < 80; i++) { try { await api('/api/state'); ready = true; break; } catch { await sleep(50); } }
+  assert.ok(ready, output);
+  assert.equal((await api('/api/state')).backend, 'rust');
+  const project = (await api('/api/state')).project;
+  assert.match(await (await fetch(base)).text(), /Systems Lab/);
+  const catalog = await api('/api/projects');
+  assert.equal(catalog.projects.length, 1); assert.equal(catalog.projects[0].name, 'example');
+  assert.equal(catalog.projects[0].ready, false);
+  const firstPath = path.join(directory, 'catalog/Apps/example');
+  const secondPath = path.join(directory, 'other-app');
+  await writeFile(path.join(firstPath,'package.json'),JSON.stringify({scripts:{start:'node app.js'},dependencies:{bullmq:'1'}}));
+  await writeFile(path.join(firstPath,'Dockerfile'),'FROM node:22\nEXPOSE 8080\n');
+  const detected=await api('/api/project/inspect?path='+encodeURIComponent(firstPath));
+  assert.equal(detected.source,'code-scan');assert.equal(detected.definition.services.worker,undefined);assert.ok(detected.definition.services.redis);
+  detected.definition.services.redis.enabled=false;
+  await api('/api/project/manifest',{projectPath:firstPath,definition:detected.definition});
+  const loaded=await api('/api/project/inspect?path='+encodeURIComponent(firstPath));
+  assert.equal(loaded.source,'project-file');assert.equal(loaded.definition.services.redis.enabled,false);
+  assert.equal((await api('/api/project/inspect?scan=true&path='+encodeURIComponent(firstPath))).source,'code-scan');
+
+  await api('/api/workload', { projectPath: firstPath, requirements: { averageRps: '200', peakRps: '2000', readWriteRatio: '95:5', durability: 'RPO 0', p99: '' } });
+  await api('/api/workload', { projectPath: secondPath, requirements: { peakRps: '10000' } });
+  const workloads = await api('/api/workloads');
+  assert.equal(workloads[firstPath].peakRps, '2000'); assert.equal(workloads[firstPath].p99, '');
+  assert.equal(workloads[secondPath].peakRps, '10000');
+  assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'workspace/workloads.json'), 'utf8')), workloads);
+  const badWorkload = await fetch(base + '/api/workload', { method: 'POST', body: JSON.stringify({ projectPath: 'relative', requirements: {} }) });
+  assert.equal(badWorkload.status, 400);
+
+  const invalid = structuredClone(project); invalid.services[0].id = '../escape';
+  assert.equal((await fetch(base + '/api/save', { method: 'POST', body: JSON.stringify(invalid) })).status, 400);
+  assert.deepEqual((await api('/api/state')).project, project);
+  const infra = (await api('/api/state')).infra;
+  assert.equal(Object.keys(infra.config.resources).length, 13);
+  assert.equal((await fetch(base + '/api/infra/service', { method: 'POST', body: JSON.stringify({ service: 'unknown', action: 'stop' }) })).status, 400);
+  const config = structuredClone(infra.config);
+  config.mode = 'custom'; config.projectPath = directory;
+  await writeFile(path.join(directory, 'Dockerfile'), 'FROM scratch\n');
+  await api('/api/infra/prepare', config);
+  const compose = JSON.parse(await readFile((await api('/api/state')).infra.composePath, 'utf8'));
+  assert.equal(compose.services.web.build.context, directory);
+  assert.equal(compose.services.web.mem_limit, `${config.resources.web.ram}m`);
+  const denied = await fetch(base + '/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: 'https://untrusted.example' }, body: '{}' });
+  assert.equal(denied.status, 403);
+  await api('/api/start', {});
+  const post = (route, data, token) => fetch(base + '/network/users/gateway' + route, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) }, body: JSON.stringify(data) });
+  const a = await (await post('/login', { username: 'alice' })).json();
+  const b = await (await post('/login', { username: 'bob' })).json();
+  assert.notEqual(a.token, b.token);
+  assert.equal((await (await post('/checkout', { item: 1 }, a.token)).json()).order.user, 'alice');
+  assert.equal((await (await post('/checkout', { item: 1 }, b.token)).json()).order.user, 'bob');
+  assert.equal((await post('/checkout', { item: 1 })).status, 401);
+  await api('/api/load', { users: 3, duration: 3, ramp: 1, target: 'demo' });
+  let state;
+  for (let i = 0; i < 80; i++) { state = await api('/api/state'); if (state.run.status !== 'running') break; await sleep(200); }
+  assert.equal(state.run.status, 'passed', JSON.stringify(state.logs.slice(-8)));
+  await api('/api/load/stop', {}); // Also waits for automatic observations to finish persisting.
+  state = await api('/api/state');
+  assert.ok(state.metrics.bytesSent > 0); assert.ok(state.metrics.bytesReceived > 0);
+  assert.ok(state.metrics.readRequests > 0); assert.ok(state.metrics.otherRequests > 0);
+  assert.ok(state.metrics.p50 > 0); assert.ok(state.metrics.p99 >= state.metrics.p95);
+  assert.equal(state.observations.__demo__.target, 'demo');
+  assert.equal(state.observations.__demo__.projectPath, null);
+  assert.ok(state.observations.__demo__.fields.averageRps);
+  assert.equal(state.observations[firstPath], undefined);
+  const observations = JSON.parse(await readFile(path.join(directory, 'workspace/observations.json'), 'utf8'));
+  assert.ok(observations.__demo__.fields.responseSize);
+  assert.ok(state.metrics.requests > 3); assert.equal(state.metrics.failed, 0); assert.ok(state.metrics.passed > 0);
+  project.links[1].enabled = false;
+  await api('/api/save', project);
+  assert.deepEqual(JSON.parse(await readFile(path.join(directory, 'workspace/project.json'), 'utf8')), project);
+  const partition = await post('/checkout', { item: 1 }, a.token);
+  assert.equal(partition.status, 503);
+  project.links[1].enabled = true; project.links[2].failure = 100;
+  await api('/api/save', project);
+  await api('/api/load', { users: 2, duration: 2, ramp: 1, target: 'demo' });
+  for (let i = 0; i < 80; i++) { state = await api('/api/state'); if (state.run.status !== 'running') break; await sleep(200); }
+  assert.equal(state.run.status, 'thresholds failed', JSON.stringify(state.logs.slice(-8)));
+  assert.ok(state.metrics.failed > 0); assert.equal(state.metrics.failureRate, 100);
+  await api('/api/stop', {});
+  state = await api('/api/state'); assert.deepEqual(state.services, {});
+  // Stop a live run, then verify SIGTERM also cleans up active services and k6.
+  project.links[2].failure = 0;
+  await api('/api/save', project);
+  await api('/api/start', {});
+  await api('/api/load', { users: 1, duration: 30, ramp: 1, target: 'demo' });
+  await api('/api/load/stop', {});
+  assert.equal((await api('/api/state')).run.status, 'stopped');
+  await api('/api/load', { users: 1, duration: 30, ramp: 1, target: 'demo' });
+  const servicePorts = Object.values((await api('/api/state')).services).map(s => s.port);
+  const closed = new Promise(resolve => child.once('close', resolve));
+  child.kill('SIGTERM'); await closed;
+  assert.equal(child.exitCode, 0, output);
+  for (const port of servicePorts) await assert.rejects(fetch(`http://127.0.0.1:${port}/`));
+  console.log(JSON.stringify({ healthyRequests: 'passed', failureRate: state.metrics.failureRate, thresholds: state.run.status, stoppedServices: Object.keys(state.services).length }));
+});

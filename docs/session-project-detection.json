@@ -1,0 +1,24 @@
+{
+  "id":"2026-10-27-project-detection-and-removal",
+  "summary":"Replaced UI profile requirements with editable project-local service definitions, bounded Rust code detection, evidence display and unrestricted removal. Supersedes required-service protection in session-remove-resource.json.",
+  "status":"implemented-and-verified",
+  "progress":[
+    "src/inspection.rs scans Node runtime packages, Dockerfiles and recognized root Compose image declarations without executing code or reading .env. BullMQ alone does not create a worker; an explicit worker runtime script is required. systems-lab.json takes precedence over scans.",
+    "Rust exposes GET /api/project/inspect and POST /api/project/manifest, validating version, IDs and paths and saving through an atomic project-local replacement. Project discovery no longer selects FreshPhones by matching source paths.",
+    "project-definition.mjs generates dynamic application services from the manifest. Disabled services and dangling Compose dependencies are omitted; gateway routes omit disabled upstreams. Direct HTTP entry works without Nginx. Existing stack identity and data volumes retained.",
+    "public/app.js allows API, worker, gateway and database removal, with dependency warnings and Undo. Project panel has Rescan code and Save project file; workspace Save and Prepare/Start save definitions too. Rescan preserves explicit settings and exclusions. Inspector shows source file/line evidence. Detection errors disable candidates rather than showing assumed resources.",
+    "Created /home/nami/Desktop/projects/Apps/fresh-phones-ph/systems-lab.json from verified existing Docker runtime settings, using generated lab placeholders instead of secrets. Nginx is explicitly marked lab-adapter, not claimed as detected. No app source, live containers or data removed.",
+    "cargo test: 7 passed; cargo clippy -D warnings clean; release build successful. Full Node suite: 12 passed including real HTTP/k6 integration, discovery/manifest endpoints and removal without dangling dependencies. Browser checks passed all services removable, evidence, warning, save, rescan exclusions, 1280x800 fit, narrow widths and no page errors.",
+    "Restarted idle systems-lab.service to activate Rust endpoints; browser mutations were intercepted. Existing Docker application containers retained."
+  ],
+  "decisions":[
+    "Project file is authoritative; code detection is bounded evidence and candidate discovery, not full deployment inference.",
+    "Client dependencies alone do not prove a separate worker; require an explicit runtime script.",
+    "Do not block removals to satisfy a profile. Warn about dependent apps; allow deliberate failure testing.",
+    "Rescans merge evidence and new candidates while retaining explicit runtime settings and removals."
+  ],
+  "blockers":["Vault README reads still return I/O errors; brain projects/resume give no output. Canonical memory persistence unverified; this local handoff is verified."],
+  "questions":["No human usability study. Scanning cannot infer all deployment environments, secrets, migrations or build contexts; unfamiliar projects require manifest review."],
+  "next":["Refresh localhost:8787. Review Project detection, then Resources. Save workspace or project file to retain edits; Prepare/Start applies them to containers."],
+  "sources":["/home/nami/Desktop/projects/Apps/systems-lab/src/inspection.rs","/home/nami/Desktop/projects/Apps/systems-lab/project-definition.mjs","/home/nami/Desktop/projects/Apps/systems-lab/public/app.js","/home/nami/Desktop/projects/Apps/systems-lab/test/integration.test.mjs","/home/nami/Desktop/projects/Apps/fresh-phones-ph/systems-lab.json"]
+}

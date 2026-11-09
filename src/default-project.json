@@ -1,0 +1,41 @@
+{
+  "services": [
+    {
+      "id": "gateway",
+      "code": "export default async function(req, ctx) {\n  // Route requests through the configured network link.\n  return ctx.call('api', req.path, {\n    method: req.method, body: req.body,\n  });\n}\n"
+    },
+    {
+      "id": "api",
+      "code": "export default async function(req, ctx) {\n  // Try adding a cache, retries, or a concurrency limit.\n  await ctx.sleep(20);\n  return ctx.call('store', req.path, {\n    method: req.method, body: req.body,\n  });\n}\n"
+    },
+    {
+      "id": "store",
+      "code": "import { randomUUID } from 'node:crypto';\nconst sessions = new Map();\nconst orders = [];\nconst items = [{ id: 1, title: 'Distributed Systems' }];\n\nexport default async function(req, ctx) {\n  await ctx.sleep(10);\n  if (req.path === '/login' && req.method === 'POST') {\n    const { username } = JSON.parse(req.body);\n    const token = randomUUID();\n    sessions.set(token, username);\n    return { token, username };\n  }\n  const user = sessions.get((req.headers.authorization || '').replace('Bearer ', ''));\n  if (!user) return ctx.reply(401, { error: 'Please log in' });\n  if (req.path.startsWith('/checkout') && req.method === 'POST') {\n    orders.push({ user, ...JSON.parse(req.body), id: orders.length + 1 });\n    return { order: orders.at(-1), totalOrders: orders.length };\n  }\n  return { user, items, totalOrders: orders.length };\n}\n"
+    }
+  ],
+  "links": [
+    {
+      "source": "users",
+      "target": "gateway",
+      "latency": 5,
+      "failure": 0,
+      "enabled": true
+    },
+    {
+      "source": "gateway",
+      "target": "api",
+      "latency": 10,
+      "failure": 0,
+      "enabled": true
+    },
+    {
+      "source": "api",
+      "target": "store",
+      "latency": 15,
+      "failure": 0,
+      "enabled": true
+    }
+  ],
+  "scenario": "import http from 'k6/http';\nimport { check, sleep } from 'k6';\nimport exec from 'k6/execution';\n\nexport const options = {\n  noCookiesReset: true,\n  stages: [\n    { duration: __ENV.RAMP + 's', target: Number(__ENV.USERS) },\n    { duration: __ENV.DURATION + 's', target: Number(__ENV.USERS) },\n    { duration: '3s', target: 0 },\n  ],\n  thresholds: { http_req_failed: ['rate<0.05'], http_req_duration: ['p(95)<1000'] },\n};\n\n// Module state is isolated per virtual user and survives their iterations.\nlet token;\nconst think = () => sleep(0.5 + Math.random() * 1.5);\n\nexport default function() {\n  const base = __ENV.TARGET;\n  if (!token) {\n    const login = http.post(base + '/login', JSON.stringify({\n      username: 'shopper-' + exec.vu.idInTest,\n    }), { headers: { 'Content-Type': 'application/json' }, tags: { name: 'Log in' } });\n    if (!check(login, { 'login succeeds': r => r.status === 200 })) {\n      think();\n      return;\n    }\n    token = login.json('token');\n    think();\n  }\n  const params = { headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' } };\n  const catalog = http.get(base + '/catalog', { ...params, tags: { name: 'Browse catalog' } });\n  check(catalog, { 'catalog loads': r => r.status === 200 });\n  think();\n  // Most visits browse; some users choose to buy.\n  if (Math.random() < 0.25) {\n    const order = http.post(base + '/checkout', JSON.stringify({ item: 1 }),\n      { ...params, tags: { name: 'Place order' } });\n    check(order, { 'order accepted': r => r.status === 200 });\n    think();\n  }\n}\n",
+  "freshScenario": "import http from 'k6/http';\nimport { check, sleep, group } from 'k6';\n\nexport const options = {\n  noCookiesReset: true,\n  stages: [\n    { duration: __ENV.RAMP + 's', target: Number(__ENV.USERS) },\n    { duration: __ENV.DURATION + 's', target: Number(__ENV.USERS) },\n    { duration: '3s', target: 0 },\n  ],\n  thresholds: { http_req_failed: ['rate<0.05'], http_req_duration: ['p(95)<1500'] },\n};\n\nconst think = () => sleep(1 + Math.random() * 3);\nexport default function() {\n  const base = __ENV.TARGET;\n  group('Browse FreshPhones', function() {\n    const home = http.get(base + '/', { tags: { name: 'Home page' } });\n    check(home, { 'home loads': r => r.status === 200 });\n    think();\n    const catalog = http.get(base + '/api/catalog', { tags: { name: 'Public catalog' } });\n    check(catalog, { 'catalog available': r => r.status === 200 });\n    think();\n    if (Math.random() < 0.3) {\n      const about = http.get(base + '/about', { tags: { name: 'About and verification' } });\n      check(about, { 'about loads': r => r.status === 200 });\n      think();\n      const lookup = http.get(base + '/api/agents/verify?q=Lab%20Test', { tags: { name: 'Agent lookup' } });\n      check(lookup, { 'lookup available': r => r.status === 200 });\n      think();\n    }\n  });\n  // Public, read-only traffic is ready out of the box.\n  // For staff/customer flows, seed synthetic accounts in freshphones_lab,\n  // then POST /api/auth/login with email/password and an Origin header\n  // matching http://localhost:18080. k6 keeps each VU's cookie jar separate.\n  // Real rate limits stay enabled: HTTP 429 counts as a failed request.\n}\n"
+}
